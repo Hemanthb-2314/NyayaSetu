@@ -4,7 +4,9 @@ from pypdf import PdfReader
 
 # --- 🔒 CONFIGURATION ---
 # 1. Paste your GROQ API Key here
-GROQ_API_KEY = "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" 
+import streamlit as st
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+#GROQ_API_KEY = "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" 
 
 # 2. Choose a Groq Model
 MODEL_NAME = "llama-3.3-70b-versatile"
@@ -236,3 +238,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
