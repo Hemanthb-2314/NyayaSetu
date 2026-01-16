@@ -3,12 +3,13 @@ import openai
 from pypdf import PdfReader
 
 # --- 🔒 CONFIGURATION ---
-# 1. Paste your GROQ API Key here
-import streamlit as st
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-#GROQ_API_KEY = "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" 
+# Using Streamlit Secrets for security (Set 'GROQ_API_KEY' in Streamlit Cloud Dashboard)
+try:
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+except:
+    # Fallback for local testing (only works if you have a .streamlit/secrets.toml)
+    GROQ_API_KEY = ""
 
-# 2. Choose a Groq Model
 MODEL_NAME = "llama-3.3-70b-versatile"
 
 # --- PAGE CONFIGURATION ---
@@ -32,12 +33,7 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         margin-bottom: 10px;
     }
-    .highlight {
-        background-color: #e3f2fd;
-        padding: 10px;
-        border-radius: 5px;
-        border: 1px solid #90caf9;
-    }
+    .stInfo { border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -54,9 +50,8 @@ def extract_text_from_pdf(pdf_file):
         return f"Error reading PDF: {str(e)}"
 
 def call_groq_api(messages):
-    """Generic function to call Groq API with a list of messages."""
-    if not GROQ_API_KEY or "gsk_" not in GROQ_API_KEY:
-        return "❌ Error: Invalid or missing Groq API Key."
+    if not GROQ_API_KEY:
+        return "❌ Error: API Key not found. Please add 'GROQ_API_KEY' to Streamlit Secrets."
 
     client = openai.OpenAI(
         base_url="https://api.groq.com/openai/v1",
@@ -79,11 +74,11 @@ def main():
     st.title("⚖️ NyayaSetu Pro")
     st.markdown("### Indian Legal Intelligence Suite")
 
-    # Initialize Session State for Main Chat
+    # Initialize Session State
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    # --- SIDEBAR (PDF Upload) ---
+    # --- SIDEBAR ---
     with st.sidebar:
         st.header("📂 Case Files")
         uploaded_file = st.file_uploader("Upload Legal Document (PDF)", type="pdf")
@@ -93,18 +88,28 @@ def main():
             with st.spinner("Processing Document..."):
                 document_context = extract_text_from_pdf(uploaded_file)
                 st.success(f"Loaded: {uploaded_file.name}")
-                st.info(f"Extracted {len(document_context)} characters.")
+        
+        st.divider()
+        st.header("⚙️ Settings")
+        
+        # THE TOGGLE: Default to New Law (BNS)
+        law_mode = st.toggle("Switch to New Laws (BNS 2023)", value=True, 
+                             help="When ON, responses prioritize Bharatiya Nyaya Sanhita. When OFF, responses use IPC.")
+        
+        current_framework = "BNS 2023" if law_mode else "IPC 1860"
+        st.info(f"Mode: **{current_framework}**")
+        
+        if st.button("Clear Chat History"):
+            st.session_state.chat_history = []
+            st.rerun()
 
-    # --- TABS FOR DIFFERENT MODES ---
+    # --- TABS ---
     tab1, tab2, tab3 = st.tabs(["💬 Legal Assistant", "🔄 IPC ⇄ BNS Converter", "📝 Document Drafter"])
 
-    # ---------------------------------------------------------
-    # TAB 1: STANDARD CHAT (RAG)
-    # ---------------------------------------------------------
+    # TAB 1: LEGAL CHAT
     with tab1:
-        st.subheader("Ask Questions on Indian Law")
+        st.subheader(f"Chatting in {current_framework} Mode")
         
-        # Display Chat History
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 if message["role"] == "assistant":
@@ -112,130 +117,67 @@ def main():
                 else:
                     st.markdown(message["content"])
 
-        # Chat Input
-        if prompt := st.chat_input("Ex: What is the punishment for cyberstalking?"):
-            # 1. Add User Message to History
+        if prompt := st.chat_input("Ex: What is the punishment for cheating?"):
             st.session_state.chat_history.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # 2. Construct System Prompt
-            base_system_prompt = """
+            # --- DYNAMIC PROMPT LOGIC ---
+            if law_mode:
+                framework_instruction = "You MUST use the Bharatiya Nyaya Sanhita (BNS) 2023. If the user mentions old IPC sections, correct them to the new BNS sections."
+            else:
+                framework_instruction = "You MUST use the legacy Indian Penal Code (IPC) 1860. Focus on the traditional sections used before 2023."
+
+            base_system_prompt = f"""
             You are NyayaSetu, an elite Indian Legal Assistant. 
-            Answer queries based on the Constitution, BNS 2023, BNSS 2023, and BSA 2023.
+            CURRENT FRAMEWORK: {framework_instruction}
             If a document context is provided, prioritize it.
             Keep answers structured and cite sections strictly.
             """
             
             messages = [{"role": "system", "content": base_system_prompt}]
-            
             if document_context:
-                messages.append({"role": "system", "content": f"USER DOCUMENT CONTEXT:\n{document_context[:20000]}"})
+                messages.append({"role": "system", "content": f"USER DOCUMENT CONTEXT:\n{document_context[:15000]}"})
             
-            # Append entire chat history for context
             messages.extend(st.session_state.chat_history)
 
-            # 3. Get Response
             with st.chat_message("assistant"):
-                with st.spinner("Analyzing legal precedents..."):
+                with st.spinner(f"Consulting {current_framework}..."):
                     response_text = call_groq_api(messages)
                     st.markdown(f"<div class='law-card'>{response_text}</div>", unsafe_allow_html=True)
             
-            # 4. Save Assistant Response
             st.session_state.chat_history.append({"role": "assistant", "content": response_text})
 
-   # ---------------------------------------------------------
-    # TAB 2: IPC TO BNS CONVERTER (FIXED)
-    # ---------------------------------------------------------
+    # TAB 2: CONVERTER
     with tab2:
         st.subheader("🔄 Legacy to New Law Converter")
-        st.markdown("Use this tool to map old **IPC/CrPC** sections to the new **BNS/BNSS (2023)**.")
-
         col1, col2 = st.columns([1, 2])
-        
         with col1:
-            law_code = st.selectbox("Select Old Code", ["IPC (Indian Penal Code)", "CrPC (Criminal Procedure)", "IEA (Evidence Act)"])
-            section_num = st.text_input("Enter Section Number", placeholder="e.g., 301")
+            law_code = st.selectbox("Select Old Code", ["IPC", "CrPC", "IEA"])
+            section_num = st.text_input("Enter Section Number", placeholder="e.g., 420")
             convert_btn = st.button("Analyze & Map", use_container_width=True)
-
         with col2:
             if convert_btn and section_num:
-                with st.spinner("Searching specific legal definitions..."):
-                    # --- IMPROVED PROMPT ---
-                    converter_prompt = f"""
-                    You are a Senior Indian Legal Expert.
-                    The user wants to find the BNS/BNSS 2023 equivalent for: **{law_code} Section {section_num}**.
+                converter_prompt = f"Map {law_code} Section {section_num} to the new 2023 Laws (BNS/BNSS/BSA). Provide Section Number, Definition, and Key Changes."
+                result = call_groq_api([{"role": "user", "content": converter_prompt}])
+                st.markdown(f"<div class='law-card'>{result}</div>", unsafe_allow_html=True)
 
-                    ### STRICT INSTRUCTIONS:
-                    1. First, internally identify the **Legal Definition** of the old section (e.g., "IPC 300 is Murder", "IPC 420 is Cheating").
-                    2. Then, find the **exact section number** in the new Bharatiya Nyaya Sanhita (BNS) or BNSS 2023 that covers this SAME definition.
-                    3. **DO NOT** output generic phrases like "no direct equivalent" or "reorganized".
-                    4. If the exact section number is debated, provide the section that covers the **same crime**.
-
-                    ### EXAMPLES FOR YOUR LOGIC:
-                    - IPC 302 (Punishment for Murder) -> BNS Section 103.
-                    - IPC 420 (Cheating) -> BNS Section 318.
-                    - IPC 124A (Sedition) -> BNS Section 152 (Acts endangering sovereignty).
-                    
-                    ### REQUIRED OUTPUT FORMAT:
-                    **Old Law ({law_code} {section_num}):** [Brief Name/Definition]
-                    **New Law (BNS/BNSS):** Section [Number] - [Name]
-                    **Key Changes:** [Specific changes in prison term, fine, or definition keywords]
-                    """
-                    
-                    messages = [{"role": "user", "content": converter_prompt}]
-                    result = call_groq_api(messages)
-                    
-                    st.markdown(f"<div class='law-card'>{result}</div>", unsafe_allow_html=True)
-
-    # ---------------------------------------------------------
-    # TAB 3: LEGAL DRAFTER (Novelty 2)
-    # ---------------------------------------------------------
+    # TAB 3: DRAFTER
     with tab3:
         st.subheader("📝 AI Legal Drafter")
-        st.markdown("Generate first drafts of legal documents in seconds.")
-
-        draft_type = st.selectbox("Document Type", ["Rental Agreement", "Affidavit", "Legal Notice", "Employment Contract", "RTI Application"])
-        
+        draft_type = st.selectbox("Document Type", ["Rental Agreement", "Affidavit", "Legal Notice", "Employment Contract"])
         with st.form("drafting_form"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                party_one = st.text_input("Party 1 Name (e.g., Landlord/Employer)")
-                location = st.text_input("Jurisdiction (City/State)")
-            with col_b:
-                party_two = st.text_input("Party 2 Name (e.g., Tenant/Employee)")
-                key_terms = st.text_area("Key Terms/Details (Rent amount, notice period, specific clauses)")
-            
-            generate_btn = st.form_submit_button("Generate Draft")
-
-        if generate_btn:
-            if party_one and party_two and key_terms:
-                with st.spinner(f"Drafting {draft_type}..."):
-                    draft_prompt = f"""
-                    Act as a Senior Legal Drafter in India.
-                    Draft a valid **{draft_type}** for jurisdiction: {location}.
-                    
-                    **Parties:**
-                    1. {party_one}
-                    2. {party_two}
-                    
-                    **Terms to Include:**
-                    {key_terms}
-                    
-                    **Instructions:**
-                    - Use formal legal language.
-                    - Include standard indemnity and termination clauses applicable in India.
-                    - Ensure formatting is clean with placeholders [___] for dates/signatures.
-                    """
-                    
-                    messages = [{"role": "user", "content": draft_prompt}]
-                    draft_result = call_groq_api(messages)
-                    
-                    st.markdown(f"<div class='law-card'>{draft_result}</div>", unsafe_allow_html=True)
-                    st.download_button("Download Draft", draft_result, file_name=f"{draft_type}_Draft.txt")
-            else:
-                st.warning("Please fill in the party names and key terms.")
+            p1 = st.text_input("Party 1 Name")
+            p2 = st.text_input("Party 2 Name")
+            loc = st.text_input("Jurisdiction")
+            terms = st.text_area("Key Terms")
+            submit = st.form_submit_button("Generate Draft")
+        
+        if submit and p1 and p2:
+            draft_prompt = f"Draft a {draft_type} between {p1} and {p2} in {loc}. Include: {terms}. Use formal Indian legal language."
+            draft = call_groq_api([{"role": "user", "content": draft_prompt}])
+            st.markdown(f"<div class='law-card'>{draft}</div>", unsafe_allow_html=True)
+            st.download_button("Download Draft", draft, file_name=f"{draft_type}.txt")
 
 if __name__ == "__main__":
     main()
-
